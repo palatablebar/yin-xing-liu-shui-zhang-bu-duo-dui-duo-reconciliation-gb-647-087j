@@ -11,7 +11,11 @@ def sha256_hex(raw: bytes) -> str:
 
 
 def make_run_id(bank_sha: str, ledger_sha: str, rule_version: str, params: dict) -> str:
-    """同一组输入 + 同一组参数得到同一个 run_id，重跑命中同一批次。"""
+    """同一批有效交易 + 同一组参数得到同一个 run_id，重跑命中同一批次。
+
+    两侧传入的是合并后的有效集合摘要（effective sha256），而不是单个文件名或文件摘要：
+    同一批交易无论由「一份全量」还是「基准 + 多次补传」得到，都落进同一批次。
+    """
     payload = "|".join(
         [
             rule_version,
@@ -41,23 +45,22 @@ def json_safe(value):
 
 
 def build_manifest(run: dict) -> dict:
+    inputs = {}
+    for side in ("bank", "ledger"):
+        inputs[side] = {
+            "file": run.get(f"{side}_file") or "",
+            "sha256": run.get(f"{side}_sha256") or "",
+            "bytes": run.get(f"{side}_bytes", 0),
+            "effective_sha256": run.get(f"{side}_eff_sha256") or "",
+            "merge": run.get(f"{side}_merge", {}) or {},
+            "sources": run.get(f"{side}_sources", []) or [],
+        }
     return {
         "run_id": run["run_id"],
         "created_at": run["created_at"],
         "rule_version": run["rule_version"],
         "params": run.get("params", {}),
-        "inputs": {
-            "bank": {
-                "file": run.get("bank_file") or "",
-                "sha256": run.get("bank_sha256") or "",
-                "bytes": run.get("bank_bytes", 0),
-            },
-            "ledger": {
-                "file": run.get("ledger_file") or "",
-                "sha256": run.get("ledger_sha256") or "",
-                "bytes": run.get("ledger_bytes", 0),
-            },
-        },
+        "inputs": inputs,
         "counts": {
             "bank_raw": run.get("bank_raw", 0),
             "ledger_raw": run.get("ledger_raw", 0),

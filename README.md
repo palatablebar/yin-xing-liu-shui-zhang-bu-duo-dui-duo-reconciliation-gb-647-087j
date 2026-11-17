@@ -15,13 +15,27 @@
 
 | 模块 | 使用者动作 | 入口 |
 |---|---|---|
-| M1 流水采信 | 导入银行流水或账簿凭证，看到编码、分段与逐行诊断 | `POST /api/statements/import`、页面 `/` |
+| M1 流水采信 | 导入银行流水或账簿凭证，看到编码、分段与逐行诊断；分批补传时自动判定整段重出还是只补新增 | `POST /api/statements/import`、页面 `/` |
 | M2 金额日期规则 | 查看列定义、借贷符号、容差与日期窗口 | `GET /api/contract` |
 | M3 质量隔离 | 按原因码看隔离行并导出 CSV | `GET /api/quarantine`、`/api/quarantine.csv`、页面 `/quarantine` |
 | M4 候选匹配 | 生成一对一、一对多、多对一候选 | `POST /api/candidates`、页面 `/candidates` |
 | M5 多对多求解 | 求解不重叠匹配组，看手续费分摊 | `POST /api/matches`、页面 `/matches` |
 | M6 差异与批次 | 看两侧守恒、差异归因与历史批次 | `GET /api/differences`、`GET /api/batches`、页面 `/batches` |
 | M7 报告导出 | 导出报告 CSV 与运行清单 JSON | `GET /api/export/report.csv`、`/api/export/manifest.json`、页面 `/export` |
+
+## 补传规则
+
+同一账户的流水会分批补传，两份文件日期范围可能重叠。导入时逐账户判定：
+
+- **整段重出**（`replace`）：新文件重述了旧文件在重叠日期段内的流水号，同段旧副本被替换，
+  旧文件在该段内独有的流水视为撤回；日期段外的旧流水保留。
+- **只补新增**（`cumulative`）：新文件与旧集合没有共同流水号，或只重述少数旧行，旧流水全部保留。
+- 去重只认流水号，不认金额与摘要：同一天两笔同额同摘要的扣款只要流水号不同就各自保留。
+- 页面、接口与下载文件都引用合并后的同一批有效交易；`run_id` 按这批交易的内容计算，
+  同一组文件重跑导入不会新增笔数或重复计数。
+- 导入失败不写入任何数据，旧批次完整保留；空文件不会清空旧版。
+- 可在导入表单或 `-F mode=replace|cumulative` 显式指定，覆盖自动判定。判定细节与来源追溯见
+  `docs/DATA-DICTIONARY.md` 与运行清单的 `inputs.<side>.merge` / `sources`。
 
 ## 启动
 

@@ -69,10 +69,24 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       const data = new FormData(form);
       try {
-        await post("/api/statements/import", data);
-        window.location.reload();
+        setBusy(true);
+        const result = await post("/api/statements/import", data);
+        if (result.merge_mode === "noop") {
+          flash(`未生效：${result.state}，保留旧版 ${result.counts.bank_valid + result.counts.ledger_valid} 笔`);
+          setBusy(false);
+          return;
+        }
+        const merge = result.merge || {};
+        flash(
+          `导入完成：${result.merge_mode === "replace" ? "整段重出替换" : "只补新增累计"}，` +
+          `新增 ${merge.new_rows || 0} 行，替换 ${merge.replaced_rows || 0} 行，` +
+          `撤回 ${merge.dropped_rows || 0} 行，有效合计 ${merge.effective_rows || 0} 行`,
+          "ok"
+        );
+        window.setTimeout(() => window.location.reload(), 1200);
       } catch (error) {
         flash(error.message);
+        setBusy(false);
       }
     });
   }

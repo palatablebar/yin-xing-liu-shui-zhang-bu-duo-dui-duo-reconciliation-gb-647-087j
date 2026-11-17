@@ -87,6 +87,22 @@ STATUS_LABELS = {
     "empty": "空批次",
 }
 
+MERGE_LABELS = {
+    "initial": "首份基准",
+    "replace": "整段重出（替换）",
+    "cumulative": "只补新增（累计）",
+    "mixed": "按账户混合",
+    "noop": "未生效（保留旧版）",
+}
+
+MODE_LABELS = {
+    "initial": "首次导入",
+    "replace": "整段重出：同段旧流水被新文件替换，旧文件在该段内独有的流水视为撤回",
+    "cumulative": "只补新增：新文件只带新增流水，旧文件独有流水保留",
+    "mixed": "按账户混合：部分账户整段重出，其余账户只补新增",
+    "noop": "未生效：空文件或仅表头，保留该侧旧版",
+}
+
 TOTAL_LABELS = {
     "bank_gross": "银行发生额",
     "bank_fee": "手续费",
@@ -107,6 +123,16 @@ def status_label(value) -> str:
     return STATUS_LABELS.get(text, reasons.label(text) if text in reasons.REASONS else text)
 
 
+def merge_label(value) -> str:
+    text = str(value or "")
+    return MERGE_LABELS.get(text, text)
+
+
+def mode_label(value) -> str:
+    text = str(value or "")
+    return MODE_LABELS.get(text, text)
+
+
 def setup(app: FastAPI) -> None:
     templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
     templates.env.filters["money"] = money
@@ -116,6 +142,8 @@ def setup(app: FastAPI) -> None:
     templates.env.filters["reason_label"] = reason_label
     templates.env.filters["tier_label"] = tier_label
     templates.env.filters["status_label"] = status_label
+    templates.env.filters["merge_label"] = merge_label
+    templates.env.filters["mode_label"] = mode_label
     app.state.templates = templates
 
     def base(request: Request, title: str, current: str) -> dict:

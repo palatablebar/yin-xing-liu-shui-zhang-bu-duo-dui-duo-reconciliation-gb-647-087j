@@ -34,7 +34,13 @@ CREATE TABLE IF NOT EXISTS runs (
     segments INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'empty',
     input_states_json TEXT NOT NULL DEFAULT '{}',
-    duration_ms INTEGER NOT NULL DEFAULT 0
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    bank_eff_sha256 TEXT NOT NULL DEFAULT '',
+    ledger_eff_sha256 TEXT NOT NULL DEFAULT '',
+    bank_merge_json TEXT NOT NULL DEFAULT '{}',
+    ledger_merge_json TEXT NOT NULL DEFAULT '{}',
+    bank_sources_json TEXT NOT NULL DEFAULT '[]',
+    ledger_sources_json TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS records (
     run_id TEXT NOT NULL,
@@ -54,7 +60,11 @@ CREATE TABLE IF NOT EXISTS records (
     flags_json TEXT NOT NULL DEFAULT '[]',
     raw_json TEXT NOT NULL DEFAULT '[]',
     raw_amount TEXT NOT NULL DEFAULT '',
-    raw_date TEXT NOT NULL DEFAULT ''
+    raw_date TEXT NOT NULL DEFAULT '',
+    source_file TEXT NOT NULL DEFAULT '',
+    source_sha TEXT NOT NULL DEFAULT '',
+    source_seq INTEGER NOT NULL DEFAULT 0,
+    origin_sha TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_records_run ON records(run_id, side, status);
 CREATE TABLE IF NOT EXISTS candidates (
@@ -91,8 +101,27 @@ RUN_COLUMNS = (
     "run_id", "created_at", "rule_version", "params_json", "bank_sha256", "ledger_sha256",
     "bank_file", "ledger_file", "bank_bytes", "ledger_bytes", "bank_raw", "ledger_raw",
     "bank_valid", "ledger_valid", "bank_quar", "ledger_quar", "segments", "status",
-    "input_states_json", "duration_ms",
+    "input_states_json", "duration_ms", "bank_eff_sha256", "ledger_eff_sha256",
+    "bank_merge_json", "ledger_merge_json", "bank_sources_json", "ledger_sources_json",
 )
+
+# 旧库补列：CREATE TABLE IF NOT EXISTS 不会给已存在的表加列。
+MIGRATIONS = {
+    "runs": {
+        "bank_eff_sha256": "TEXT NOT NULL DEFAULT ''",
+        "ledger_eff_sha256": "TEXT NOT NULL DEFAULT ''",
+        "bank_merge_json": "TEXT NOT NULL DEFAULT '{}'",
+        "ledger_merge_json": "TEXT NOT NULL DEFAULT '{}'",
+        "bank_sources_json": "TEXT NOT NULL DEFAULT '[]'",
+        "ledger_sources_json": "TEXT NOT NULL DEFAULT '[]'",
+    },
+    "records": {
+        "source_file": "TEXT NOT NULL DEFAULT ''",
+        "source_sha": "TEXT NOT NULL DEFAULT ''",
+        "source_seq": "INTEGER NOT NULL DEFAULT 0",
+        "origin_sha": "TEXT NOT NULL DEFAULT ''",
+    },
+}
 
 
 class Store:
@@ -117,6 +146,13 @@ class Store:
     def init(self) -> None:
         with self._conn() as conn:
             conn.executescript(SCHEMA)
+            for table, columns in MIGRATIONS.items():
+                existing = {
+                    row["name"] for row in conn.execute(f"PRAGMA table_info({table})")
+                }
+                for name, definition in columns.items():
+                    if name not in existing:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
 
     # ---------- 批次 ----------
     @staticmethod
@@ -124,6 +160,10 @@ class Store:
         data = dict(row)
         data["params"] = json.loads(data.pop("params_json") or "{}")
         data["input_states"] = json.loads(data.pop("input_states_json") or "{}")
+        data["bank_merge"] = json.loads(data.pop("bank_merge_json", "{}") or "{}")
+        data["ledger_merge"] = json.loads(data.pop("ledger_merge_json", "{}") or "{}")
+        data["bank_sources"] = json.loads(data.pop("bank_sources_json", "[]") or "[]")
+        data["ledger_sources"] = json.loads(data.pop("ledger_sources_json", "[]") or "[]")
         return data
 
     def latest_run(self) -> dict | None:
@@ -145,8 +185,14 @@ class Store:
 
     def save_run(self, run: dict, records: list[dict], candidates: list[dict],
                  matches: list[dict]) -> None:
-        params_json = json.dumps(run.get("params", {}), ensure_ascii=False, sort_keys=True)
-        states_json = json.dumps(run.get("input_states", {}), ensure_ascii=False)
+        def dump(key: str, default):
+            value = run.get(key, default)
+            if isinstance(value, str):
+                return value
+            return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+        params_json = dump("params", {})
+        states_json = dump("input_states", {})
         with self._conn() as conn:
             run_id = run["run_id"]
             conn.execute("DELETE FROM records WHERE run_id = ?", (run_id,))
@@ -157,8 +203,9 @@ class Store:
                     run_id, created_at, rule_version, params_json, bank_sha256, ledger_sha256,
                     bank_file, ledger_file, bank_bytes, ledger_bytes, bank_raw, ledger_raw,
                     bank_valid, ledger_valid, bank_quar, ledger_quar, segments, status,
-                    input_states_json, duration_ms
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    input_states_json, duration_ms, bank_eff_sha256, ledger_eff_sha256,
+                    bank_merge_json, ledger_merge_json, bank_sources_json, ledger_sources_json
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     run_id, run["created_at"], run["rule_version"], params_json,
                     run.get("bank_sha256", ""), run.get("ledger_sha256", ""),
@@ -169,13 +216,17 @@ class Store:
                     run.get("bank_quar", 0), run.get("ledger_quar", 0),
                     run.get("segments", 0), run.get("status", "empty"),
                     states_json, run.get("duration_ms", 0),
+                    run.get("bank_eff_sha256", ""), run.get("ledger_eff_sha256", ""),
+                    dump("bank_merge", {}), dump("ledger_merge", {}),
+                    dump("bank_sources", []), dump("ledger_sources", []),
                 ),
             )
             conn.executemany(
                 """INSERT INTO records (run_id, side, seq, row_no, txn_no, account, posted_at,
                     direction, amount, fee, memo, counterparty, status, reason, flags_json,
-                    raw_json, raw_amount, raw_date)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    raw_json, raw_amount, raw_date, source_file, source_sha, source_seq,
+                    origin_sha)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 [
                     (
                         run_id, r["side"], r["seq"], r["row_no"], r["txn_no"], r.get("account", ""),
@@ -185,6 +236,8 @@ class Store:
                         json.dumps(r.get("flags", []), ensure_ascii=False),
                         json.dumps(r.get("raw", []), ensure_ascii=False),
                         str(r.get("raw_amount", "")), str(r.get("raw_date", "")),
+                        r.get("source_file", ""), r.get("source_sha", ""),
+                        int(r.get("source_seq") or 0), r.get("origin_sha", ""),
                     )
                     for r in records
                 ],
@@ -234,7 +287,7 @@ class Store:
         if status:
             sql += " AND status = ?"
             args.append(status)
-        sql += " ORDER BY side, row_no, seq"
+        sql += " ORDER BY side, seq"
         with self._conn() as conn:
             rows = conn.execute(sql, args).fetchall()
         out = []

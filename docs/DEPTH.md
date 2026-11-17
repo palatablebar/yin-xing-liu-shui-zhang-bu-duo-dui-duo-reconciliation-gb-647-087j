@@ -8,7 +8,7 @@
 
 | 模块 | 使用者动作 | 入口 | 核心文件 | 测试 |
 |---|---|---|---|---|
-| M1 流水采信 | 导入银行流水或账簿凭证，看到编码、分段与逐行诊断 | POST /api/statements/import、页面 / | `app/modules/m1_ingest/reader.py` `app/modules/m1_ingest/decode.py` `app/modules/m1_ingest/segments.py` | `tests/test_m1_ingest.py` |
+| M1 流水采信 | 导入银行流水或账簿凭证，看到编码、分段与逐行诊断；分批补传时判定整段重出/只补新增 | POST /api/statements/import、页面 / | `app/modules/m1_ingest/reader.py` `app/modules/m1_ingest/decode.py` `app/modules/m1_ingest/segments.py` `app/modules/m1_ingest/merge.py` | `tests/test_m1_ingest.py`、`tests/test_m8_supplement.py` |
 | M2 金额日期规则 | 查看列定义、借贷符号、容差与日期窗口 | GET /api/contract | `app/modules/m2_contract/contract.py` `app/modules/m2_contract/coerce.py` | `tests/test_m2_contract.py` |
 | M3 质量隔离 | 按原因码看隔离行并导出 CSV | GET /api/quarantine、页面 /quarantine | `app/modules/m3_quality/rules.py` `app/modules/m3_quality/quarantine.py` | `tests/test_m3_quality.py` |
 | M4 候选匹配 | 生成一对一、一对多、多对一候选 | POST /api/candidates、页面 /candidates | `app/modules/m4_candidates/candidate.py` `app/modules/m4_candidates/window.py` | `tests/test_m4_candidates.py` |
@@ -33,6 +33,8 @@
 | TRAP-19 | 同一对流水同时命中一对一与子集候选 | 结果取决于候选生成顺序 | 层级优先 + 金额差 + 日期差 + 业务号排序，输入顺序变化不影响结果 | `app/modules/m5_matching/subset.py` | `tests/test_m5_matching.py::test_result_independent_of_candidate_order` |
 | TRAP-23 | 日期差正好 3 天与 4 天；23:59:59 与次日 00:00 | 端点重复计入或跨日归错桶 | 本地日桶左闭右开 `[日初, 次日初)`；窗口按自然日差 ≤3 | `app/modules/m4_candidates/window.py` | `tests/test_m4_candidates.py::test_window_boundary_three_days_included` |
 | TRAP-24 | 手续费按比例分摊后合计差一分 | 各自四舍五入，分摊合计不等于实际合计 | 最大余额法分到 0.01 元，按组号确定性分配尾差 | `app/modules/m5_matching/fees.py` | `tests/test_m5_matching.py::test_fee_allocation_sums_to_actual` |
+| TRAP-25 | 同一账户分批补传，两份文件日期范围重叠：整段重出 vs 只补新增 | 只用最新文件会丢失旧文件独有扣款；逐行合并会把重出副本重复计入 | 逐账户按日期覆盖与流水号集合判定 `replace` / `cumulative`，撤回只作用于被重述的来源文件；`origin_sha` 追溯原始来源，晚到扣款不误撤 | `app/modules/m1_ingest/merge.py`、`app/pipeline.py` | `tests/test_m8_supplement.py` |
+| TRAP-26 | 同一天两笔同额同摘要扣款；重跑同一组文件；导入失败/空文件 | 按金额+摘要去重会吃掉一笔真实扣款；重跑重复计数；失败导入清空旧版 | 去重只认业务号；`run_id` 按合并后有效集合计算，同文件重跑复用导入序号；失败不写入、空文件 `noop` | `app/modules/m1_ingest/merge.py`、`app/pipeline.py` | `tests/test_m8_supplement.py::test_same_day_same_amount_same_memo_not_collapsed`、`::test_reimport_same_file_is_idempotent`、`::test_failed_import_keeps_previous_version` |
 
 ## 对账规则
 
@@ -47,6 +49,7 @@
 
 - 反例（朴素实现会挂）：`tests/test_m5_matching.py::test_bank_signed_total_matches_decimal_sum`（float 累加对不上分）、`tests/test_m1_ingest.py::test_truncated_tail_rejected`（`readlines()` 会把半行当数据）、`tests/test_m3_quality.py::test_duplicate_txn_keeps_earliest`（后写覆盖会得到 999.00）、`tests/test_m5_matching.py::test_many_to_one_subset_bounded_to_four`（5 笔合并会被错误凑成一笔）、`tests/test_m4_candidates.py::test_window_four_days_excluded`（宽窗口会多配一对）。
 - 不变量：`tests/test_invariants.py::test_bank_conservation`（守恒）、`tests/test_invariants.py::test_disjoint_assignment`（一组不占两行）、`tests/test_invariants.py::test_fee_conservation`（分摊守恒）、`tests/test_invariants.py::test_rerun_row_counts_stable`（幂等）、`tests/test_invariants.py::test_quarantine_excluded_from_totals`（隔离不计入合计）。
+- 补传不变量：`tests/test_m8_supplement.py`（重出与累计判定、同日同额不合并、同文件重跑幂等、失败/空文件保旧、页面与导出引用同一批交易、晚到扣款不被重出误撤）。
 - 端到端：`tests/test_e2e.py::test_full_pipeline_from_samples`。
 
 ## 已知不覆盖

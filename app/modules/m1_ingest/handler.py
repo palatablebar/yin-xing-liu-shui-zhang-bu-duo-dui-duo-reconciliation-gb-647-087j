@@ -14,10 +14,13 @@ async def import_statement(
     request: Request,
     side: str = Form("bank"),
     sample: str = Form(""),
+    mode: str = Form("auto"),
     file: UploadFile | None = File(None),
 ):
     if side not in ("bank", "ledger"):
         raise DomainError("E_SIDE", "side 只能是 bank 或 ledger", 400)
+    if mode not in ("auto", "replace", "cumulative"):
+        raise DomainError("E_MODE", "mode 只能是 auto、replace 或 cumulative", 400)
     settings = request.app.state.settings
     store = request.app.state.store
     if file is not None and file.filename:
@@ -29,7 +32,7 @@ async def import_statement(
         filename, raw = resolve_sample(settings, sample)
     else:
         raise DomainError("E_INPUT", "需要上传文件或指定样例", 400)
-    return import_side(settings, store, side, filename, raw)
+    return import_side(settings, store, side, filename, raw, mode)
 
 
 @router.get("")

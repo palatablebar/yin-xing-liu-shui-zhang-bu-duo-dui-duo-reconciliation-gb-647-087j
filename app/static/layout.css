@@ -89,7 +89,8 @@ a:hover { text-decoration: underline; }
 
 .rules { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 
-.import-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+.import-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 6px; }
+.merge-note { margin: 0 0 10px; color: var(--ink-muted); font-size: 11px; }
 
 .page { padding: 14px 18px 30px; max-width: 1180px; margin: 0 auto; }
 

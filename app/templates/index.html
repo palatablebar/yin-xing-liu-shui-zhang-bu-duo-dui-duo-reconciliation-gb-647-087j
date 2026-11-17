@@ -27,9 +27,22 @@
         <option value="bank">银行</option>
         <option value="ledger">账簿</option>
       </select>
+      <select name="mode" aria-label="补传方式" title="整段重出=替换该段，补新增=与旧文件累计">
+        <option value="auto">自动判定</option>
+        <option value="replace">整段重出（替换）</option>
+        <option value="cumulative">只补新增（累计）</option>
+      </select>
       <input type="file" name="file" accept=".csv" aria-label="流水文件">
       <button class="btn" type="submit">导入文件</button>
     </form>
+    {% if run and (run.bank_merge.mode or run.ledger_merge.mode) %}
+    {% set merges = [('银行', run.bank_merge), ('账簿', run.ledger_merge)] | selectattr('1.mode') | list %}
+    <p class="merge-note">
+      {% for side_name, merge in merges -%}
+      {{ side_name }}：{{ merge.mode|merge_label }}（+{{ merge.new_rows or 0 }} 行，替换 {{ merge.replaced_rows or 0 }}，撤回 {{ merge.dropped_rows or 0 }}）{% if not loop.last %} · {% endif %}
+      {%- endfor %}
+    </p>
+    {% endif %}
     <div class="rules">
       <span class="chip">容差 {{ contract.tolerance }} 元</span>
       <span class="chip">窗口 {{ contract.window_days }} 天</span>
